@@ -1,28 +1,40 @@
 package com.jcloisterzone.game.phase;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.Random;
 
 import com.jcloisterzone.Player;
 import com.jcloisterzone.action.MeepleAction;
 import com.jcloisterzone.action.PlayerAction;
+import com.jcloisterzone.board.Location;
+import com.jcloisterzone.board.Position;
 import com.jcloisterzone.board.pointer.FeaturePointer;
 import com.jcloisterzone.config.Config;
-import com.jcloisterzone.event.SelectActionEvent;
+import com.jcloisterzone.feature.City;
+import com.jcloisterzone.feature.Cloister;
+import com.jcloisterzone.feature.Completable;
 import com.jcloisterzone.feature.Farm;
 import com.jcloisterzone.feature.Feature;
 import com.jcloisterzone.feature.Quarter;
-import com.jcloisterzone.feature.visitor.IsCompleted;
+import com.jcloisterzone.feature.Road;
+import com.jcloisterzone.feature.Scoreable;
+import com.jcloisterzone.figure.Barn;
 import com.jcloisterzone.figure.Follower;
 import com.jcloisterzone.figure.Meeple;
+import com.jcloisterzone.game.capability.BarnCapability;
 import com.jcloisterzone.game.capability.CountCapability;
+import com.jcloisterzone.game.state.ActionsState;
+import com.jcloisterzone.game.state.GameState;
+import com.jcloisterzone.reducers.DeployMeeple;
 import com.jcloisterzone.ui.GameController;
 import com.jcloisterzone.wsio.WsSubscribe;
 import com.jcloisterzone.wsio.message.DeployMeepleMessage;
 import com.jcloisterzone.wsio.message.PassMessage;
+
+import io.vavr.Tuple2;
+import io.vavr.collection.List;
+import io.vavr.collection.Seq;
+import io.vavr.collection.Set;
+import io.vavr.collection.Vector;
 
 @RequiredCapability(CountCapability.class)
 public class CocPreScorePhase extends Phase {
@@ -31,104 +43,110 @@ public class CocPreScorePhase extends Phase {
         super(config, random);
     }
 
-    @Override
-    public Player getActivePlayer() {
-        Player p = countCap.getMoveOutPlayer();
-        return p == null ? game.getTurnPlayer() : p;
+//    @Override
+//    public Player getActivePlayer() {
+//        Player p = countCap.getMoveOutPlayer();
+//        return p == null ? game.getTurnPlayer() : p;
+//    }
+
+    private boolean isLast(GameState state, Player player) {
+        return state.getTurnPlayer().equals(player);
     }
 
-    private List<PlayerAction<?>> preparePlayerActions(Player player) {
-        //List<PlayerAction<?>> result = new ArrayList<>();
-        Map<Class<? extends Follower>, MeepleAction> actions = new HashMap<>();
-        for (Feature feature : getTile().getFeatureMap()) {
-            if (feature instanceof Farm) {
-                continue;
-            }
-            if (feature.walk(new IsCompleted())) {
-                Quarter q = countCap.getQuarterFor(feature);
-                if (countCap.getCount().getLocation() == q.getLocation()) {
-                    continue;
-                }
-                for (Meeple m : q.getMeeples()) {
-                    Follower f = (Follower) m;
-                    if (f.getPlayer() != player) {
-                        continue;
-                    }
-                    MeepleAction action = actions.get(f.getClass());
-                    if (action == null) {
-                        action = new MeepleAction(f.getClass());
-                        actions.put(f.getClass(), action);
-                    }
-                    action.add(new FeaturePointer(feature));
-                }
-            }
-        }
-        return new ArrayList<>(actions.values());
+    private StepResult endPhase(GameState state) {
+        state = clearActions(state);
+        return next(state);
     }
 
-    @Override
-    public void next() {
-        countCap.setMoveOutPlayer(null);
-        super.next();
-    }
-
-    private Player nextPlayer() {
-        Player player = countCap.getMoveOutPlayer();
-        if (player == game.getTurnPlayer()) {
-            return null;
-        }
-        //check for null after turn player check (important for 1 player game)
-        if (player == null) {
-            player = game.getNextPlayer();
+    private StepResult nextPlayer(GameState state, Player player) {
+        if (isLast(state, player)) {
+            return endPhase(state);
         } else {
-            player = game.getNextPlayer(player);
+            return processPlayer(state, player.getNextPlayer(state));
         }
-        countCap.setMoveOutPlayer(player);
-        return player;
     }
 
     @Override
-    public void enter() {
-        Player player = nextPlayer();
-        while (true) {
-            List<PlayerAction<?>> actions = preparePlayerActions(player);
-            if (actions.isEmpty()) {
-                if ((player = nextPlayer()) == null) {
-                    next();
-                    return;
+    public StepResult enter(GameState state) {
+        Player player = state.getTurnPlayer().getNextPlayer(state);
+        return processPlayer(state, player);
+    }
+
+//    private Location getQuarterLocationFor(Feature f) {
+//        if (f instanceof City) return Location.QUARTER_CASTLE;
+//        if (f instanceof Road) return Location.QUARTER_BLACKSMITH;
+//        if (f instanceof Cloister) return Location.QUARTER_CATHEDRAL;
+//        if (f instanceof Farm) return Location.QUARTER_MARKET;
+//        throw new IllegalArgumentException("Illegal feature " + f);
+//    }
+
+    private Class<? extends Scoreable> getFeatureTypeForLocation(Location loc) {
+        if (loc == Location.QUARTER_CASTLE) return City.class;
+        if (loc == Location.QUARTER_BLACKSMITH) return Road.class;
+        if (loc == Location.QUARTER_CATHEDRAL) return Cloister.class;
+        if (loc == Location.QUARTER_MARKET) return Farm.class;
+        throw new IllegalArgumentException("Illegal locaion " + loc);
+    }
+
+    private StepResult processPlayer(GameState state, Player player) {
+        FeaturePointer countFp = state.getNeutralFigures().getCountDeployment();
+        Position lastPlacedPos = state.getLastPlaced().getPosition();
+
+        // TODO derive final phase including farms
+        Vector<MeepleAction> actions = List.of(Location.QUARTER_BLACKSMITH, Location.QUARTER_CASTLE, Location.QUARTER_CATHEDRAL)
+            .filter(quarter -> quarter != countFp.getLocation())
+            .flatMap(quarter -> {
+                Set<FeaturePointer> options = state.getFeatures(getFeatureTypeForLocation(quarter))
+                    .filter(f -> ((Completable) f).isCompleted(state))
+                    .flatMap(f -> {
+                        List<FeaturePointer> places = f.getPlaces();
+                        if (places.find(p -> p.getPosition().equals(lastPlacedPos)).isDefined()) {
+                            //feature lays on last placed tile -> is finished this turn
+                            return places;
+                        } else {
+                            return List.empty();
+                        }
+                    })
+                    .toSet();
+
+                if (options.isEmpty()) {
+                    return List.empty();
                 }
-            } else {
-                toggleClock(player);
-                game.post(new SelectActionEvent(player, actions, true));
-                return;
-            }
+
+                return state.getDeployedMeeples()
+                    .filter(t -> t._2.getLocation() == quarter)   // is deployed on quarter
+                    .map(Tuple2::_1)
+                    .filter(m -> m.getPlayer().equals(player))    // and is owned by active player
+                    .groupBy(Object::getClass)					  // for each meeple class create action ...
+                    .values()
+                    .map(Seq::get)
+                    .map(m -> new MeepleAction(m, options));
+            })
+            .toVector();
+
+        if (actions.isEmpty()) {
+            return nextPlayer(state, player);
         }
+
+        ActionsState as = new ActionsState(player, Vector.narrow(actions), true);
+        as = as.mergeMeepleActions();
+        return promote(state.setPlayerActions(as));
     }
 
-    @WsSubscribe
-    public void handlePass(PassMessage msg) {
-        Player player = nextPlayer();
-        if (player == null) {
-            next();
-        } else {
-            enter();
-        }
+    @Override
+    @PhaseMessageHandler
+    public StepResult handlePass(GameState state, PassMessage msg) {
+        Player player = state.getActivePlayer();
+        return nextPlayer(state, player);
     }
 
-    @WsSubscribe
-    public void handleDeployMeeple(DeployMeepleMessage msg) {
-        assert getTile().getPosition().equals(fp.getPosition());
-        Player player = countCap.getMoveOutPlayer();
-        Feature f = getBoard().getPlayer(fp);
-        Quarter quarter = countCap.getQuarterFor(f);
-        for (Meeple m : quarter.getMeeples()) {
-            if (m.getPlayer() == player && meepleType.isInstance(m)) {
-                quarter.removeMeeple(m);
-                m.deploy(fp);
-                enter();
-                return;
-            }
-        }
-        throw new IllegalArgumentException("Mepple doesn't exist");
+    @PhaseMessageHandler
+    public StepResult handleDeployMeeple(GameState state, DeployMeepleMessage msg) {
+        FeaturePointer fp = msg.getPointer();
+        Player player = state.getActivePlayer();
+        Follower follower = player.getFollowers(state).find(f -> f.getId().equals(msg.getMeepleId())).get();
+
+        state = (new DeployMeeple(follower, fp)).apply(state);
+        return processPlayer(state, player);
     }
 }

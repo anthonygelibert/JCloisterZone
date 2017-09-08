@@ -135,6 +135,7 @@ public class GameStatePhaseReducer implements Function2<GameState, WsInGameMessa
                 continue;
             }
             try {
+                assert m.getReturnType().equals(StepResult.class) : String.format("Bad return type %s.%s()", phase.getClass().getSimpleName(), m.getName());
                 return (StepResult) m.invoke(phase, state, message);
             } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
                 throw new RuntimeException(e.getCause() == null ? e : e.getCause());
