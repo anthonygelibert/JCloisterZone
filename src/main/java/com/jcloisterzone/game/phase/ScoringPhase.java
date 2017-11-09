@@ -160,10 +160,7 @@ public class ScoringPhase extends Phase {
     }
 
     private Map<Wagon, FeaturePointer> getDeployedWagons(GameState state) {
-        return LinkedHashMap.narrow(
-         state.getDeployedMeeples()
-           .filter((m, fp) -> m instanceof Wagon)
-        );
+        return state.getDeployedMeeples().filter((m, fp) -> m instanceof Wagon).mapKeys(Wagon.class::cast);
     }
 
     private GameState scoreCompleted(GameState state, Completable completable, PlacedTile triggerBuilderForPlaced) {

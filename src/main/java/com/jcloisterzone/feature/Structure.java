@@ -28,11 +28,7 @@ public interface Structure extends Feature {
     }
 
     default Stream<Tuple2<Follower, FeaturePointer>> getFollowers2(GameState state) {
-        return
-            Stream.narrow(
-                getMeeples2(state)
-                .filter(t -> t._1 instanceof Follower)
-            );
+        return getMeeples2(state).filter(t -> t._1 instanceof Follower).map(t -> new Tuple2(t._1, t._2));
     }
 
     default Stream<Follower> getFollowers(GameState state) {
@@ -40,11 +36,7 @@ public interface Structure extends Feature {
     }
 
     default Stream<Tuple2<Special, FeaturePointer>> getSpecialMeeples2(GameState state) {
-        return
-            Stream.narrow(
-                getMeeples2(state)
-                .filter(t -> t._1 instanceof Special)
-            );
+        return getMeeples2(state).filter(t -> t._1 instanceof Special).map(t -> new Tuple2(t._1, t._2));
     }
 
     default Stream<Special> getSpecialMeeples(GameState state) {

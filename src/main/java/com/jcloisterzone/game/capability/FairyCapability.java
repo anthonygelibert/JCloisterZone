@@ -35,10 +35,10 @@ public class FairyCapability extends Capability<Void> {
         Player activePlayer = state.getPlayerActions().getPlayer();
 
 
-        LinkedHashMap<Follower, FeaturePointer> followers = LinkedHashMap.narrow(
-            state.getDeployedMeeples()
-                .filter((m, fp) -> (m instanceof Follower) && m.getPlayer().equals(activePlayer))
-        );
+        LinkedHashMap<Follower, FeaturePointer> followers =
+                state.getDeployedMeeples()
+                     .filter((m, fp) -> (m instanceof Follower) && m.getPlayer().equals(activePlayer)).mapKeys(
+                        Follower.class::cast);
 
         Fairy fairy = state.getNeutralFigures().getFairy();
 
